@@ -4,50 +4,77 @@
 # Reference: 强化学习DQN 入门小游戏 最简单的Pytorch代码
 #            https://blog.csdn.net/bu_fo/article/details/110871876
 
+import os
+import sys
 import gym
-import torch
 import random
-from datetime import datetime, timedelta
 import numpy as np
 import matplotlib.pyplot as plt
-from torch.utils.tensorboard import SummaryWriter
-from utils.gym_render_offline import OfflineRenderer
+from collections import deque
+from datetime import datetime, timedelta
 
-from custom_env.Acrobot_env import MyAcrobotEnv  
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.tensorboard import SummaryWriter
+
+sys.path.insert(0, os.getcwd())  # 把当前工作路径添加到导包路径
+from custom_env.Acrobot_env import MyAcrobotEnv
+from utils.gym_render_offline import OfflineRenderer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-class QNet(torch.nn.Module):
+class ReplayMemory(object):
+    '''
+    用deque类实现一个有限大小的循环缓冲区
+    '''
+
+    def __init__(self, capacity):
+        self.memory = deque([], maxlen=capacity)
+
+    def push(self, *args):
+        """Save a transition"""
+        self.memory.append(*args)
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+
+    def isfull(self):
+        return len(self.memory) == self.memory.maxlen
+
+class QNet(nn.Module):
 
     def __init__(self, input_size, output_size):
         super(QNet, self).__init__()
-        self.l1 = torch.nn.Linear(input_size, 256)  # eg 从4个状态出发
-        self.l2 = torch.nn.Linear(256, 128)
-        self.l3 = torch.nn.Linear(128, output_size)  # eg 输出2个动作
+        self.l1 = nn.Linear(input_size, 256)  # eg 从4个状态出发
+        self.l2 = nn.Linear(256, 128)
+        self.l3 = nn.Linear(128, output_size)  # eg 输出2个动作
 
     def forward(self, x):
         x = self.l1(x)
-        x = torch.nn.functional.relu(self.l2(x))
-        x = torch.nn.functional.relu(self.l3(x))
+        x = nn.functional.relu(self.l2(x))
+        x = nn.functional.relu(self.l3(x))
         return x
 
 class Game:
     def __init__(self, config):
-        # self.env = gym.make(config) #.unwrapped  # 解锁reward上限
-        self.env = MyAcrobotEnv()  # 创造MyAcrobotEnv环境
-        self.exp_pool = []                          # 经验池
-        self.exp_pool_size = 100000                 # 经验池大小
+        self.env = gym.make(config) #.unwrapped  # 解锁reward上限
+        # self.env = MyAcrobotEnv()  # 创造MyAcrobotEnv环境
+        self.memory = ReplayMemory(100000)          # 经验池
         self.q_net = QNet(self.env.observation_space.shape[0],
                           self.env.action_space.n).to(device)  # Q网络
         self.explore = 0.2                          # 探索率 控制随机动作出现的频率
         self.explore_decay = 1e-7                   # 探索率衰减
-        self.loss_fn = torch.nn.MSELoss().to(device)    # 损失函数
-        self.opt = torch.optim.Adam(self.q_net.parameters())    # 优化器
+        self.loss_fn = nn.MSELoss().to(device)      # 损失函数
+        self.opt = optim.Adam(self.q_net.parameters())    # 优化器
         self.renderer = OfflineRenderer()           # Docker内 离线渲染视频
+        self.batch_size = 1000                      # 每一轮选用的样本数量
         self.log_interval = 10                      # 日志间隔
         self.renderer_interval = 2000               # 渲染间隔
         self.episode = -1                           # 训练轮次计数
-        self.patch_size = 1000                      # 每一轮选用的样本数量
         self.name = config + '_' + datetime.now().strftime('%m.%d') + '_' \
             + (datetime.now() + timedelta(hours=8)).strftime('%H.%M')
 
@@ -60,8 +87,7 @@ class Game:
 
             # 采集数据
             while True:
-                if len(self.exp_pool) >= self.exp_pool_size:    # 经验池满了
-                    self.exp_pool.pop(0)                            # 删除最旧的经验
+                if self.memory.isfull():                            # 经验池满了
                     self.explore -= self.explore_decay              # 探索率降低 随机动作减少
                     if torch.rand(1) > self.explore and self.episode % self.log_interval != 0:                        # 0-1随机数 判断是否随机动作
                         action = self.env.action_space.sample()
@@ -82,7 +108,7 @@ class Game:
                 # reward -= 1 * abs(next_state[0])  # 调整 CartPole reward
                 # reward -= 5 * abs(next_state[2])  # 调整 CartPole reward
                 # reward = (next_state[0] + 0.5)**2  # 调整 MountainCar reward
-                self.exp_pool.append([state, reward, action, next_state, done]) # 存储到经验池
+                self.memory.push([state, reward, action, next_state, done]) # 存储到经验池
                 state = next_state
 
                 if self.episode % self.renderer_interval == 0:  # 添加到渲染器
@@ -94,12 +120,15 @@ class Game:
                         # self.renderer.clear()
                         self.save_net(self.name + "_" + str(self.episode))
                     if self.episode % self.log_interval == 0:  # 添加到日志
-                        self.writer.add_scalar("Reward", R, self.episode * self.patch_size)  # 将loss写入tensorboard
+                        self.writer.add_scalar("Reward", R, self.episode * self.batch_size)  # 将Reward写入tensorboard
+                        self.writer.add_scalar(
+                            "Epsilon Greedy", self.explore, self.episode *
+                            self.batch_size)  # 将Epsilon写入tensorboard
                     break
 
             # 样本足够则开始训练，否则继续采数据
-            if len(self.exp_pool) >= self.exp_pool_size:
-                exps = random.choices(self.exp_pool, k=self.patch_size)            # 随机选择经验
+            if self.memory.isfull():
+                exps = self.memory.sample(self.batch_size)  # 随机选择经验
                 _state = torch.tensor(np.array(
                     [exp[0] for exp in exps])).to(device).float()  # 将经验解码成tensor格式
                 _reward = torch.tensor(np.array([exp[1]
@@ -128,11 +157,16 @@ class Game:
                 self.episode += 1
 
     def save_net(self, name):
-        torch.save(self.q_net.state_dict(), "./model/" + name + ".pth")
-        print("model saved successfuly at model/" + name + ".pth")
+        '''
+        保存网络，路径为 ./model/[name].pth
+        '''
+        path = os.path.split(__file__)[0] + "/model/" + name + ".pth"
+        torch.save(self.q_net.state_dict(), path)
+        print("model saved successfuly at " + path)
 
     def load_net(self, name):
-        self.q_net.load_state_dict(torch.load("./model/" + name + ".pth"))  # not tried
+        path = os.path.split(__file__)[0] + "/model/" + name + ".pth"
+        self.q_net.load_state_dict(torch.load(path))
 
     def play_game(self):
         '''
@@ -156,9 +190,9 @@ class Game:
                 break
 
 if __name__ == '__main__':
-    # g = Game('CartPole-v1')
+    g = Game('CartPole-v1')
     # g = Game('MountainCar-v0')
-    g = Game('MyAcrobot')
+    # g = Game('MyAcrobot')
     g()
     # g.load_net("CartPole-v1_03.28_21.47_30000")
     # g.play_game()

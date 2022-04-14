@@ -3,15 +3,16 @@
 # Description: 尝试 Docker 中的 Gym 环境, 绕过实时渲染，实现离线保存功能
 # Reference: gym_to_gif https://gist.github.com/botforge/64cbb71780e6208172bbf03cd9293553
 
-from custom_env.Acrobot_env import MyAcrobotEnv
-from cv2 import imwrite, VideoWriter, VideoWriter_fourcc
 import gym
-from datetime import datetime, timedelta  # docker 中注意时区问题
 import sys
 import os
+from cv2 import imwrite, VideoWriter, VideoWriter_fourcc
+from datetime import datetime, timedelta  # docker 中注意时区问题
 os.environ["SDL_VIDEODRIVER"] = "dummy"  # 在docker中加上这两句屏蔽图像输出
-os.chdir(sys.path[0])  # 移动路径到当前文件所在位置
+# os.chdir(sys.path[0])  # 移动路径到当前文件所在位置
 
+sys.path.insert(0, os.getcwd())  # 把当前工作路径添加到导包路径
+from custom_env.Acrobot_env import MyAcrobotEnv
 
 class OfflineRenderer():
     def __init__(self):
@@ -110,9 +111,9 @@ class OfflineRenderer():
 if __name__ == '__main__':
     # 创造环境
     # env = gym.make('CartPole-v1')
-    # env = gym.make('Acrobot-v1')
+    env = gym.make('Acrobot-v1')
     # env = gym.make('Pendulum-v1')
-    env = MyAcrobotEnv()
+    # env = MyAcrobotEnv()
 
     observation = env.reset()  # 初始化环境 observation为环境状态
 
@@ -132,5 +133,5 @@ if __name__ == '__main__':
     endtime = datetime.now()
     print('Render time:', endtime - starttime)
 
-    renderer.export_video()  # 保存视频
+    renderer.export_video(path=os.path.split(__file__)[0] + "/video/")  # 保存视频
     env.close()  # 关闭环境

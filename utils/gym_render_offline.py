@@ -7,7 +7,8 @@ import gym
 import sys
 import os
 from cv2 import imwrite, VideoWriter, VideoWriter_fourcc
-from datetime import datetime, timedelta  # docker 中注意时区问题
+from tqdm import tqdm
+from datetime import datetime
 os.environ["SDL_VIDEODRIVER"] = "dummy"  # 在docker中加上这两句屏蔽图像输出
 # os.chdir(sys.path[0])  # 移动路径到当前文件所在位置
 
@@ -45,7 +46,7 @@ class OfflineRenderer():
         self.check_dirs(path)
         filename = path
         if naming == "time":
-            filename += (datetime.now()+timedelta(hours=8)).strftime('%H%M%S')
+            filename += datetime.now().strftime('%H%M%S')
         elif naming == "index":
             filename += str(self.naming_index)
             self.naming_index += 1
@@ -89,7 +90,7 @@ class OfflineRenderer():
         frame_size = (self.frames[0].shape[1], self.frames[0].shape[0])
         fps = 20
         if naming == "time":  # 命名
-            filename = (datetime.now()+timedelta(hours=8)).strftime('%H%M%S')
+            filename = datetime.now().strftime('%H%M%S')
         else:
             filename = naming
         if format == "avi":  # 格式
@@ -111,9 +112,9 @@ class OfflineRenderer():
 if __name__ == '__main__':
     # 创造环境
     # env = gym.make('CartPole-v1')
-    env = gym.make('Acrobot-v1')
+    # env = gym.make('Acrobot-v1')
     # env = gym.make('Pendulum-v1')
-    # env = MyAcrobotEnv()
+    env = MyAcrobotEnv()
 
     observation = env.reset()  # 初始化环境 observation为环境状态
 
@@ -122,7 +123,7 @@ if __name__ == '__main__':
 
     renderer = OfflineRenderer()  # 收集环境渲染结果
     starttime = datetime.now()
-    for t in range(100):
+    for t in tqdm(range(100)):
         action = env.action_space.sample()  # 随机采样动作空间的元素
         observation, reward, done, info = env.step(action)  # 与环境交互
         # print(observation, reward, done, info)

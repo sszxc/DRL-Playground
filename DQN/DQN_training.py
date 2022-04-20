@@ -4,6 +4,9 @@
 # Reference: 强化学习DQN 入门小游戏 最简单的Pytorch代码
 #            https://blog.csdn.net/bu_fo/article/details/110871876
 
+#TODO: 加一个tqdm
+#TODO: 加一个只刷新当前行的reward显示
+
 import os
 import sys
 import gym
@@ -11,7 +14,7 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -28,7 +31,6 @@ class ReplayMemory(object):
     '''
     用deque类实现一个有限大小的循环缓冲区
     '''
-
     def __init__(self, capacity):
         self.memory = deque([], maxlen=capacity)
 
@@ -46,7 +48,9 @@ class ReplayMemory(object):
         return len(self.memory) == self.memory.maxlen
 
 class QNet(nn.Module):
-
+    '''
+    定义网络 三层全连接
+    '''
     def __init__(self, input_size, output_size):
         super(QNet, self).__init__()
         self.l1 = nn.Linear(input_size, 256)  # eg 从4个状态出发
@@ -63,7 +67,7 @@ class Game:
     def __init__(self, config):
         self.env = gym.make(config) #.unwrapped  # 解锁reward上限
         # self.env = MyAcrobotEnv()  # 创造MyAcrobotEnv环境
-        self.memory = ReplayMemory(100000)          # 经验池
+        self.memory = ReplayMemory(10000)           # 经验池
         self.q_net = QNet(self.env.observation_space.shape[0],
                           self.env.action_space.n).to(device)  # Q网络
         self.explore = 0.2                          # 探索率 控制随机动作出现的频率
@@ -76,10 +80,10 @@ class Game:
         self.renderer_interval = 2000               # 渲染间隔
         self.episode = -1                           # 训练轮次计数
         self.name = config + '_' + datetime.now().strftime('%m.%d') + '_' \
-            + (datetime.now() + timedelta(hours=8)).strftime('%H.%M')
+            + datetime.now().strftime('%H.%M')
 
     def __call__(self):
-        self.writer = SummaryWriter("./log/" + self.name)
+        self.writer = SummaryWriter(os.path.split(__file__)[0] + "/log/" + self.name)
 
         while True:  # 开始一局游戏
             state = self.env.reset()    # 重置环境
@@ -116,7 +120,8 @@ class Game:
 
                 if done:                            # 结束一轮训练（杆子倒了）
                     if self.episode % self.renderer_interval == 0:  # 渲染视频
-                        self.renderer.export_video(naming = self.name + "_" + str(self.episode))
+                        self.renderer.export_video(naming = self.name + "_" + str(self.episode),
+                                                    path = os.path.split(__file__)[0] + "/video/")
                         # self.renderer.clear()
                         self.save_net(self.name + "_" + str(self.episode))
                     if self.episode % self.log_interval == 0:  # 添加到日志
@@ -185,7 +190,8 @@ class Game:
 
             self.renderer.add(self.env.render(mode="rgb_array"))
             if done:
-                self.renderer.export_video(naming=self.name + "_play")
+                self.renderer.export_video(naming=self.name + "_play",
+                            path=os.path.split(__file__)[0] + "/video/")
                 print("play game reward:", R)
                 break
 

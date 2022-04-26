@@ -18,7 +18,7 @@ class MyAcrobotEnv(core.Env):
         self.observation_space = spaces.Box(low=low,
                                             high=high,
                                             dtype=np.float32)
-        self.action_space = spaces.Discrete(5, start=-2)  # {-2, -1, 0, 1, 2}
+        self.action_space = spaces.Discrete(5)  # {0, 1, 2, 3, 4}
         self.next_action = 0
 
         # Constants
@@ -53,7 +53,7 @@ class MyAcrobotEnv(core.Env):
         return self.state
 
     def step(self, action):
-        self.next_action = action * 6  # {-2, -1, 0, 1, 2}*6
+        self.next_action = (action-2) * 6  # ({0, 1, 2, 3, 4}-2)*6
         self.state = odeint(self.acrobot, self.state,
                         np.array([0, self.time_step]))[1]  # 更新状态
         q1 = self.state[0]

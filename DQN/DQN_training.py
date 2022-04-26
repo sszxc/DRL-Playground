@@ -5,7 +5,6 @@
 #            https://blog.csdn.net/bu_fo/article/details/110871876
 
 #TODO: 加一个tqdm
-#TODO: 加一个只刷新当前行的reward显示
 
 import os
 import sys
@@ -49,7 +48,7 @@ class ReplayMemory(object):
 
 class QNet(nn.Module):
     '''
-    定义网络 三层全连接
+    定义网络: 三层全连接, 隐藏层分别为256、128, 激活函数为relu
     '''
     def __init__(self, input_size, output_size):
         super(QNet, self).__init__()
@@ -64,23 +63,31 @@ class QNet(nn.Module):
         return x
 
 class Game:
-    def __init__(self, config):
-        self.env = gym.make(config) #.unwrapped  # 解锁reward上限
-        # self.env = MyAcrobotEnv()  # 创造MyAcrobotEnv环境
-        self.memory = ReplayMemory(10000)           # 经验池
+
+    def __init__(self,
+                 env_name,
+                 memory_size=100000,
+                 batch_size=1000,
+                 log_interval=10,
+                 renderer_interval=2000):
+        if env_name == 'MyAcrobot':
+            self.env = MyAcrobotEnv()  # 创造MyAcrobotEnv环境
+        else:
+            self.env = gym.make(env_name) #.unwrapped   # 解锁reward上限
+        self.memory = ReplayMemory(memory_size)         # 经验池
         self.q_net = QNet(self.env.observation_space.shape[0],
-                          self.env.action_space.n).to(device)  # Q网络
-        self.explore = 0.2                          # 探索率 控制随机动作出现的频率
-        self.explore_decay = 1e-7                   # 探索率衰减
-        self.loss_fn = nn.MSELoss().to(device)      # 损失函数
-        self.opt = optim.Adam(self.q_net.parameters())    # 优化器
-        self.renderer = OfflineRenderer()           # Docker内 离线渲染视频
-        self.batch_size = 1000                      # 每一轮选用的样本数量
-        self.log_interval = 10                      # 日志间隔
-        self.renderer_interval = 2000               # 渲染间隔
-        self.episode = -1                           # 训练轮次计数
-        self.name = config + '_' + datetime.now().strftime('%m.%d') + '_' \
-            + datetime.now().strftime('%H.%M')
+                          self.env.action_space.n).to(device)  # 三层全连接Q网络
+        self.explore = 0.2                              # 探索率 控制随机动作出现的频率
+        self.explore_decay = 1e-7                       # 探索率衰减
+        self.loss_fn = nn.MSELoss().to(device)          # 损失函数
+        self.opt = optim.Adam(self.q_net.parameters())  # 优化器
+        self.renderer = OfflineRenderer()               # Docker内 离线渲染视频
+        self.batch_size = batch_size                    # 每一轮选用的样本数量
+        self.log_interval = log_interval                # 日志间隔
+        self.renderer_interval = renderer_interval      # 渲染间隔
+        self.episode = -1                               # 训练轮次计数
+        self.name = env_name + '_' + datetime.now().strftime('%m.%d') + '_' \
+            + datetime.now().strftime('%H.%M')          # 日志文件名
 
     def __call__(self):
         self.writer = SummaryWriter(os.path.split(__file__)[0] + "/log/" + self.name)
@@ -109,8 +116,8 @@ class Game:
                 # print('Called env.step, elapsed time:', endtime - starttime)
 
                 R += reward                                                     # 本局游戏的总奖励
-                # reward -= 1 * abs(next_state[0])  # 调整 CartPole reward
-                # reward -= 5 * abs(next_state[2])  # 调整 CartPole reward
+                reward -= 1 * abs(next_state[0])  # 调整 CartPole reward
+                reward -= 5 * abs(next_state[2])  # 调整 CartPole reward
                 # reward = (next_state[0] + 0.5)**2  # 调整 MountainCar reward
                 self.memory.push([state, reward, action, next_state, done]) # 存储到经验池
                 state = next_state
@@ -119,16 +126,20 @@ class Game:
                     self.renderer.add(self.env.render(mode="rgb_array"))
 
                 if done:                            # 结束一轮训练（杆子倒了）
-                    if self.episode % self.renderer_interval == 0:  # 渲染视频
-                        self.renderer.export_video(naming = self.name + "_" + str(self.episode),
-                                                    path = os.path.split(__file__)[0] + "/video/")
-                        # self.renderer.clear()
-                        self.save_net(self.name + "_" + str(self.episode))
                     if self.episode % self.log_interval == 0:  # 添加到日志
                         self.writer.add_scalar("Reward", R, self.episode * self.batch_size)  # 将Reward写入tensorboard
                         self.writer.add_scalar(
                             "Epsilon Greedy", self.explore, self.episode *
                             self.batch_size)  # 将Epsilon写入tensorboard
+                        print("\r Episode " + str(self.episode).rjust(5, " ") +
+                              ", current reward:" + str(R).rjust(6, " "),
+                              end="")
+                    if self.episode % self.renderer_interval == 0:  # 渲染视频
+                        print("\n")  # 换行
+                        self.renderer.export_video(naming = self.name + "_" + str(self.episode),
+                                                    path = os.path.split(__file__)[0] + "/video/")
+                        # self.renderer.clear()
+                        self.save_net(self.name + "_" + str(self.episode))
                     break
 
             # 样本足够则开始训练，否则继续采数据
@@ -170,12 +181,15 @@ class Game:
         print("model saved successfuly at " + path)
 
     def load_net(self, name):
+        '''
+        从文件中加载网络, 路径为 ./model/[name].pth
+        '''
         path = os.path.split(__file__)[0] + "/model/" + name + ".pth"
         self.q_net.load_state_dict(torch.load(path))
 
     def play_game(self):
         '''
-        测试一局游戏
+        用当前网络测试一局游戏
         '''
         state = self.env.reset()
         R = 0
@@ -198,7 +212,11 @@ class Game:
 if __name__ == '__main__':
     g = Game('CartPole-v1')
     # g = Game('MountainCar-v0')
-    # g = Game('MyAcrobot')
+    # g = Game('MyAcrobot',
+    #          memory_size=10000,
+    #          batch_size=1000,
+    #          log_interval=10,
+    #          renderer_interval=2000)
     g()
     # g.load_net("CartPole-v1_03.28_21.47_30000")
     # g.play_game()
